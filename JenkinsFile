@@ -1,0 +1,95 @@
+pipeline {
+    agent any
+    
+    tools{
+        maven 'maven3'
+        jdk 'jdk17'
+    }
+    
+    environment {
+        SCANNER_HOME= tool 'sonar-scanner'
+    }
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/hussainshareef/Ekart'
+            }
+        }
+        
+        stage('Compile') {
+            steps {
+                sh "mvn compile"
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+                sh " mvn test -DskipTests=true"
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=EKART -Dsonar.projectName=EKART \
+                    -Dsonar.java.binaries=. '''
+                    
+                }
+            }
+        }
+        
+        stage('OWASP Dependency Check') {
+            steps {
+                dependencyCheck additionalArguments: ' --scan ./', odcInstallation: 'DC'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                sh "mvn clean package -DskipTests=true"
+            }
+        }
+        
+        stage('Deploy to Nexus') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'global-maven', jdk: 'jdk17', maven: 'maven3', mavenSettingsConfig: '', traceability: true) {
+                    sh "mvn deploy -DskipTests=true"
+                }
+            }
+        }
+        
+        stage('Docker Build & tag Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-creds', toolName: 'docker') {
+                        sh "docker build -t hussainshareef/ekart:latest -f docker/Dockerfile ."
+                    }
+                }
+            }
+        }
+        
+        stage('Trivy Scan') {
+            steps {
+                sh "trivy image hussainshareef/ekart:latest > trivy-report.txt"
+            }
+        }
+        
+        stage('Docker Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-creds', toolName: 'docker') {
+                        sh "docker push hussainshareef/ekart:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('Kubernetes Deploy') {
+            steps {
+                
+            }
+        }
+    }
+}
